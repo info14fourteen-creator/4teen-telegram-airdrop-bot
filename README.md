@@ -113,9 +113,23 @@ Never commit `.env` to the repository.
 # Installation
 
 Clone the repository:
+
+```bash
 git clone https://github.com/info14fourteen-creator/4teen-telegram-airdrop-bot.git
+cd 4teen-telegram-airdrop-bot
+```
+
 Install dependencies:
+
+```bash
+npm install
+```
+
 Run the bot:
+
+```bash
+npm start
+```
 ---
 
 # Deployment
