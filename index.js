@@ -89,7 +89,7 @@ To receive a random reward (1–5 4TEEN):
 3️⃣ Send your TRON wallet address`,
     Markup.inlineKeyboard([
       [
-        Markup.button.url('Join Community', 'https://t.me/The4teenToken'),
+        Markup.button.url('Join Community', 'https://t.me/fourteentokengroupe'),
         Markup.button.url('Join Channel', 'https://t.me/fourteentoken')
       ],
       [
