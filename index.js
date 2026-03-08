@@ -2,93 +2,138 @@ require('dotenv').config()
 
 const express = require('express')
 const { Telegraf, Markup } = require('telegraf')
+const TronWeb = require('tronweb')
 
 const config = require('./config')
 
 const app = express()
-
 const bot = new Telegraf(process.env.BOT_TOKEN)
 
-bot.start((ctx) => {
+// Храним пользователей, которые прошли проверку membership
+// Пока это временно в памяти. Позже вынесем в базу / файл.
+const verifiedUsers = new Set()
 
-ctx.reply(
-`Welcome to ${config.BOT_NAME}
+function isValidTronAddress(address) {
+  try {
+    return TronWeb.isAddress(address)
+  } catch (error) {
+    return false
+  }
+}
+
+function isAllowedMemberStatus(status) {
+  return (
+    status === 'member' ||
+    status === 'administrator' ||
+    status === 'creator'
+  )
+}
+
+bot.start(async (ctx) => {
+  await ctx.reply(
+    `Welcome to ${config.BOT_NAME}
 
 To receive a random reward (1–5 4TEEN):
 
-1️⃣ Join our Telegram community OR channel  
-2️⃣ Press VERIFY  
-3️⃣ Send your TRON wallet
-
-`,
-Markup.inlineKeyboard([
-[
-Markup.button.url("Join Community","https://t.me/The4teenToken"),
-Markup.button.url("Join Channel","https://t.me/fourteentoken")
-],
-[
-Markup.button.callback("VERIFY","verify_membership")
-]
-])
-)
-
+1️⃣ Join our Telegram community OR channel
+2️⃣ Press VERIFY
+3️⃣ Send your TRON wallet address`,
+    Markup.inlineKeyboard([
+      [
+        Markup.button.url('Join Community', 'https://t.me/The4teenToken'),
+        Markup.button.url('Join Channel', 'https://t.me/fourteentoken')
+      ],
+      [
+        Markup.button.callback('VERIFY', 'verify_membership')
+      ]
+    ])
+  )
 })
 
 bot.action('verify_membership', async (ctx) => {
+  const userId = ctx.from.id
 
-const userId = ctx.from.id
+  let groupMember = false
+  let channelMember = false
 
-let groupMember = false
-let channelMember = false
+  try {
+    const group = await ctx.telegram.getChatMember(config.GROUP_ID, userId)
+    if (isAllowedMemberStatus(group.status)) {
+      groupMember = true
+    }
+  } catch (error) {
+    console.log('Group membership check error:', error.message)
+  }
 
-try {
+  try {
+    const channel = await ctx.telegram.getChatMember(config.CHANNEL_ID, userId)
+    if (isAllowedMemberStatus(channel.status)) {
+      channelMember = true
+    }
+  } catch (error) {
+    console.log('Channel membership check error:', error.message)
+  }
 
-const group = await ctx.telegram.getChatMember(config.GROUP_ID, userId)
+  try {
+    await ctx.answerCbQuery()
+  } catch (error) {
+    console.log('Callback answer error:', error.message)
+  }
 
-if(
-group.status === "member" ||
-group.status === "administrator" ||
-group.status === "creator"
-){
-groupMember = true
-}
+  if (groupMember || channelMember) {
+    verifiedUsers.add(userId)
 
-}catch(e){}
+    await ctx.reply(
+      '✅ Membership confirmed.\n\nNow send your TRON wallet address in the next message.'
+    )
+  } else {
+    await ctx.reply(
+      '❌ You must join the community or channel first, then press VERIFY again.'
+    )
+  }
+})
 
-try {
+bot.on('text', async (ctx) => {
+  const userId = ctx.from.id
+  const text = ctx.message.text.trim()
 
-const channel = await ctx.telegram.getChatMember(config.CHANNEL_ID, userId)
+  if (text.startsWith('/start')) {
+    return
+  }
 
-if(
-channel.status === "member" ||
-channel.status === "administrator" ||
-channel.status === "creator"
-){
-channelMember = true
-}
+  if (!verifiedUsers.has(userId)) {
+    await ctx.reply(
+      '⚠️ First press VERIFY and pass the membership check.'
+    )
+    return
+  }
 
-}catch(e){}
+  if (!isValidTronAddress(text)) {
+    await ctx.reply(
+      '❌ This does not look like a valid TRON wallet address.\n\nPlease send a correct address that starts with T.'
+    )
+    return
+  }
 
-if(groupMember || channelMember){
+  await ctx.reply(
+    `✅ Wallet accepted: ${text}\n\nNext step: reward calculation and airdrop transaction.`
+  )
+})
 
-ctx.reply("✅ Membership confirmed.\n\nSend your TRON wallet address.")
-
-}else{
-
-ctx.reply("❌ You must join the community or channel first.")
-
-}
-
+app.get('/', (req, res) => {
+  res.send('4TEEN bot running')
 })
 
 const PORT = process.env.PORT || 3000
 
-app.get('/', (req,res)=>{
-res.send("4TEEN bot running")
-})
-
 bot.launch()
+  .then(() => {
+    console.log('Bot running')
+  })
+  .catch((error) => {
+    console.error('Bot launch error:', error)
+  })
 
-app.listen(PORT, ()=>{
-console.log("Bot running")
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`)
 })
