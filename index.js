@@ -254,21 +254,30 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000
 
-async function startApp() {
+async function boot() {
   try {
     await initDb()
     console.log('Database initialized')
+  } catch (error) {
+    console.error('Database init error:', error)
+  }
 
+  try {
+    await bot.telegram.deleteWebhook()
+    console.log('Old webhook deleted')
+  } catch (error) {
+    console.log('Webhook delete skipped:', error.message)
+  }
+
+  try {
     await bot.launch()
     console.log('Bot running')
-
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`)
-    })
   } catch (error) {
-    console.error('Startup error:', error)
-    process.exit(1)
+    console.error('Bot launch error:', error)
   }
 }
 
-startApp()
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`)
+  boot()
+})
