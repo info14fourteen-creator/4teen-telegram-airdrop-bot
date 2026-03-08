@@ -34,13 +34,23 @@ The bot verifies that a user is a member of the **4TEEN Telegram community or ch
 # Smart Contracts
 
 ### 4TEEN Token
-TMLXiCW2ZAkvjmn79ZXa4vdHX5BE3n9x4A
+`TMLXiCW2ZAkvjmn79ZXa4vdHX5BE3n9x4A`
+
 ### Airdrop Vault
-TV6eXKWCsZ15c3Svz39mRQWtBsqvNNBwpQ
-The bot calls:
+`TV6eXKWCsZ15c3Svz39mRQWtBsqvNNBwpQ`
+
+The bot calls the function:
+
+```
 airdrop(address recipient, uint256 amount, uint8 platformBit)
+```
+
 For Telegram claims the bot uses:
+
+```
 platformBit = 4
+```
+
 ---
 
 # Telegram Communities
