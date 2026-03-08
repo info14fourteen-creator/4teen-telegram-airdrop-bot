@@ -25,6 +25,7 @@ async function hasUserClaimed(userHash) {
     'SELECT 1 FROM claims WHERE telegram_user_id_hash = $1 LIMIT 1',
     [userHash]
   )
+
   return result.rowCount > 0
 }
 
@@ -33,6 +34,7 @@ async function hasWalletClaimed(walletHash) {
     'SELECT 1 FROM claims WHERE wallet_hash = $1 LIMIT 1',
     [walletHash]
   )
+
   return result.rowCount > 0
 }
 
