@@ -9,9 +9,19 @@ const config = require('./config')
 const app = express()
 const bot = new Telegraf(process.env.BOT_TOKEN)
 
+// Подключение к TRON
+const tronWeb = new TronWeb({
+  fullHost: config.TRON_FULL_NODE,
+  privateKey: process.env.TRON_PRIVATE_KEY || ''
+})
+
 // Храним пользователей, которые прошли проверку membership
 // Пока это временно в памяти. Позже вынесем в базу / файл.
 const verifiedUsers = new Set()
+
+// Защита от повторных клеймов в рамках одного запуска процесса
+const claimedUsers = new Set()
+const claimedWallets = new Set()
 
 function isValidTronAddress(address) {
   try {
@@ -27,6 +37,35 @@ function isAllowedMemberStatus(status) {
     status === 'administrator' ||
     status === 'creator'
   )
+}
+
+function getRandomReward() {
+  return Math.floor(
+    Math.random() * (config.MAX_REWARD - config.MIN_REWARD + 1)
+  ) + config.MIN_REWARD
+}
+
+function toRawAmount(amount) {
+  return amount * Math.pow(10, config.TOKEN_DECIMALS)
+}
+
+async function sendAirdrop(walletAddress, rewardAmount) {
+  if (!process.env.TRON_PRIVATE_KEY) {
+    throw new Error('TRON_PRIVATE_KEY is not configured')
+  }
+
+  const rewardRaw = toRawAmount(rewardAmount)
+
+  const contract = await tronWeb.contract().at(config.AIRDROP_CONTRACT)
+
+  const tx = await contract
+    .airdrop(walletAddress, rewardRaw, config.TELEGRAM_PLATFORM_BIT)
+    .send()
+
+  return {
+    txid: tx,
+    rewardRaw
+  }
 }
 
 bot.start(async (ctx) => {
@@ -108,6 +147,13 @@ bot.on('text', async (ctx) => {
     return
   }
 
+  if (claimedUsers.has(userId)) {
+    await ctx.reply(
+      '⚠️ This Telegram account has already claimed the reward.'
+    )
+    return
+  }
+
   if (!isValidTronAddress(text)) {
     await ctx.reply(
       '❌ This does not look like a valid TRON wallet address.\n\nPlease send a correct address that starts with T.'
@@ -115,9 +161,45 @@ bot.on('text', async (ctx) => {
     return
   }
 
-  await ctx.reply(
-    `✅ Wallet accepted: ${text}\n\nNext step: reward calculation and airdrop transaction.`
-  )
+  const walletAddress = text
+
+  if (claimedWallets.has(walletAddress)) {
+    await ctx.reply(
+      '⚠️ This wallet has already received a reward.'
+    )
+    return
+  }
+
+  const rewardAmount = getRandomReward()
+
+  try {
+    const result = await sendAirdrop(walletAddress, rewardAmount)
+
+    claimedUsers.add(userId)
+    claimedWallets.add(walletAddress)
+    verifiedUsers.delete(userId)
+
+    await ctx.reply(
+      `✅ Airdrop sent successfully!
+
+Wallet: ${walletAddress}
+Reward: ${rewardAmount} 4TEEN
+Tx: ${result.txid}`
+    )
+  } catch (error) {
+    console.error('Airdrop error:', error)
+
+    if (error.message === 'TRON_PRIVATE_KEY is not configured') {
+      await ctx.reply(
+        '⚠️ Bot is not fully configured yet. TRON private key is missing.'
+      )
+      return
+    }
+
+    await ctx.reply(
+      '❌ Airdrop transaction failed. Please try again later.'
+    )
+  }
 })
 
 app.get('/', (req, res) => {
