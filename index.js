@@ -76,18 +76,17 @@ async function getOperatorResources() {
   const operatorAddress = getOperatorAddress()
 
   const resources = await tronWeb.trx.getAccountResources(operatorAddress)
-  const bandwidthInfo = await tronWeb.trx.getAccount(operatorAddress)
 
   const energyLimit = resources.EnergyLimit || 0
   const energyUsed = resources.EnergyUsed || 0
   const energyAvailable = Math.max(0, energyLimit - energyUsed)
 
-  const freeNetLimit = bandwidthInfo.free_net_limit || 0
-  const freeNetUsed = bandwidthInfo.free_net_used || 0
+  const freeNetLimit = resources.freeNetLimit || 0
+  const freeNetUsed = resources.freeNetUsed || 0
   const freeBandwidthAvailable = Math.max(0, freeNetLimit - freeNetUsed)
 
-  const netLimit = bandwidthInfo.net_limit || 0
-  const netUsed = bandwidthInfo.net_used || 0
+  const netLimit = resources.NetLimit || 0
+  const netUsed = resources.NetUsed || 0
   const stakedBandwidthAvailable = Math.max(0, netLimit - netUsed)
 
   const bandwidthAvailable = freeBandwidthAvailable + stakedBandwidthAvailable
