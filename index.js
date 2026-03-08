@@ -25,6 +25,10 @@ const tronWeb = new TronWeb({
 // Runtime-only state for users who passed membership check
 const verifiedUsers = new Set()
 
+// Conservative resource requirements per one airdrop transaction
+const REQUIRED_ENERGY_PER_AIRDROP = 76000
+const REQUIRED_BANDWIDTH_PER_AIRDROP = 400
+
 function isValidTronAddress(address) {
   try {
     return tronWeb.isAddress(address)
@@ -60,6 +64,61 @@ function hashValue(value) {
     .digest('hex')
 }
 
+function getOperatorAddress() {
+  if (!process.env.TRON_PRIVATE_KEY) {
+    throw new Error('TRON_PRIVATE_KEY is not configured')
+  }
+
+  return tronWeb.address.fromPrivateKey(process.env.TRON_PRIVATE_KEY)
+}
+
+async function getOperatorResources() {
+  const operatorAddress = getOperatorAddress()
+
+  const resources = await tronWeb.trx.getAccountResources(operatorAddress)
+  const bandwidthInfo = await tronWeb.trx.getAccount(operatorAddress)
+
+  const energyLimit = resources.EnergyLimit || 0
+  const energyUsed = resources.EnergyUsed || 0
+  const energyAvailable = Math.max(0, energyLimit - energyUsed)
+
+  const freeNetLimit = bandwidthInfo.free_net_limit || 0
+  const freeNetUsed = bandwidthInfo.free_net_used || 0
+  const freeBandwidthAvailable = Math.max(0, freeNetLimit - freeNetUsed)
+
+  const netLimit = bandwidthInfo.net_limit || 0
+  const netUsed = bandwidthInfo.net_used || 0
+  const stakedBandwidthAvailable = Math.max(0, netLimit - netUsed)
+
+  const bandwidthAvailable = freeBandwidthAvailable + stakedBandwidthAvailable
+
+  return {
+    operatorAddress,
+    energyAvailable,
+    bandwidthAvailable,
+    energyLimit,
+    energyUsed,
+    freeNetLimit,
+    freeNetUsed,
+    netLimit,
+    netUsed
+  }
+}
+
+async function checkResourcesForAirdrop() {
+  const info = await getOperatorResources()
+
+  const hasEnoughEnergy = info.energyAvailable >= REQUIRED_ENERGY_PER_AIRDROP
+  const hasEnoughBandwidth = info.bandwidthAvailable >= REQUIRED_BANDWIDTH_PER_AIRDROP
+
+  return {
+    ...info,
+    hasEnoughEnergy,
+    hasEnoughBandwidth,
+    hasEnoughResources: hasEnoughEnergy && hasEnoughBandwidth
+  }
+}
+
 async function sendAirdrop(walletAddress, rewardAmount) {
   if (!process.env.TRON_PRIVATE_KEY) {
     throw new Error('TRON_PRIVATE_KEY is not configured')
@@ -86,7 +145,7 @@ To receive a random reward (1–5 4TEEN):
 
 1️⃣ Join our Telegram community OR channel
 2️⃣ Press VERIFY
-3️⃣ Send your TRON wallet address`,
+3️⃣ If daily resources are available, send your TRON wallet address`,
     Markup.inlineKeyboard([
       [
         Markup.button.url('Join Community', 'https://t.me/fourteentokengroupe'),
@@ -131,15 +190,50 @@ bot.action('verify_membership', async (ctx) => {
     console.log('Callback answer error:', error.message)
   }
 
-  if (groupMember || channelMember) {
+  if (!(groupMember || channelMember)) {
+    await ctx.reply(
+      '❌ You must join the community or channel first, then press VERIFY again.'
+    )
+    return
+  }
+
+  try {
+    const resourceCheck = await checkResourcesForAirdrop()
+
+    if (!resourceCheck.hasEnoughResources) {
+      await ctx.reply(
+        `⚠️ Daily airdrop capacity is currently exhausted.
+
+Available now:
+Energy: ${resourceCheck.energyAvailable}
+Bandwidth: ${resourceCheck.bandwidthAvailable}
+
+Required for one claim:
+Energy: ${REQUIRED_ENERGY_PER_AIRDROP}
+Bandwidth: ${REQUIRED_BANDWIDTH_PER_AIRDROP}
+
+Please try again tomorrow.`
+      )
+      return
+    }
+
     verifiedUsers.add(userId)
 
     await ctx.reply(
-      '✅ Membership confirmed.\n\nNow send your TRON wallet address in the next message.'
+      `✅ Membership confirmed.
+✅ Daily resources are available for your claim.
+
+Available now:
+Energy: ${resourceCheck.energyAvailable}
+Bandwidth: ${resourceCheck.bandwidthAvailable}
+
+Now send your TRON wallet address in the next message.`
     )
-  } else {
+  } catch (error) {
+    console.error('Resource check error:', error)
+
     await ctx.reply(
-      '❌ You must join the community or channel first, then press VERIFY again.'
+      '❌ Failed to check daily resources. Please try again later.'
     )
   }
 })
@@ -207,6 +301,32 @@ bot.on('text', async (ctx) => {
 
     await ctx.reply(
       '❌ Database check failed. Please try again later.'
+    )
+    return
+  }
+
+  try {
+    const resourceCheck = await checkResourcesForAirdrop()
+
+    if (!resourceCheck.hasEnoughResources) {
+      verifiedUsers.delete(userId)
+
+      await ctx.reply(
+        `⚠️ There are no longer enough resources to process your claim today.
+
+Available now:
+Energy: ${resourceCheck.energyAvailable}
+Bandwidth: ${resourceCheck.bandwidthAvailable}
+
+Please try again tomorrow.`
+      )
+      return
+    }
+  } catch (error) {
+    console.error('Resource re-check error:', error)
+
+    await ctx.reply(
+      '❌ Failed to re-check daily resources. Please try again later.'
     )
     return
   }
