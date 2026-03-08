@@ -1,31 +1,33 @@
 require('dotenv').config()
 
+const crypto = require('crypto')
 const express = require('express')
 const { Telegraf, Markup } = require('telegraf')
 const TronWeb = require('tronweb')
 
 const config = require('./config')
+const {
+  initDb,
+  hasUserClaimed,
+  hasWalletClaimed,
+  saveClaim
+} = require('./db')
 
 const app = express()
 const bot = new Telegraf(process.env.BOT_TOKEN)
 
-// Подключение к TRON
+// TRON connection
 const tronWeb = new TronWeb({
   fullHost: config.TRON_FULL_NODE,
   privateKey: process.env.TRON_PRIVATE_KEY || ''
 })
 
-// Храним пользователей, которые прошли проверку membership
-// Пока это временно в памяти. Позже вынесем в базу / файл.
+// Runtime-only state for users who passed membership check
 const verifiedUsers = new Set()
-
-// Защита от повторных клеймов в рамках одного запуска процесса
-const claimedUsers = new Set()
-const claimedWallets = new Set()
 
 function isValidTronAddress(address) {
   try {
-    return TronWeb.isAddress(address)
+    return tronWeb.isAddress(address)
   } catch (error) {
     return false
   }
@@ -49,13 +51,21 @@ function toRawAmount(amount) {
   return amount * Math.pow(10, config.TOKEN_DECIMALS)
 }
 
+function hashValue(value) {
+  const salt = process.env.HASH_SALT || ''
+
+  return crypto
+    .createHash('sha256')
+    .update(`${salt}:${value}`)
+    .digest('hex')
+}
+
 async function sendAirdrop(walletAddress, rewardAmount) {
   if (!process.env.TRON_PRIVATE_KEY) {
     throw new Error('TRON_PRIVATE_KEY is not configured')
   }
 
   const rewardRaw = toRawAmount(rewardAmount)
-
   const contract = await tronWeb.contract().at(config.AIRDROP_CONTRACT)
 
   const tx = await contract
@@ -97,6 +107,7 @@ bot.action('verify_membership', async (ctx) => {
 
   try {
     const group = await ctx.telegram.getChatMember(config.GROUP_ID, userId)
+
     if (isAllowedMemberStatus(group.status)) {
       groupMember = true
     }
@@ -106,6 +117,7 @@ bot.action('verify_membership', async (ctx) => {
 
   try {
     const channel = await ctx.telegram.getChatMember(config.CHANNEL_ID, userId)
+
     if (isAllowedMemberStatus(channel.status)) {
       channelMember = true
     }
@@ -147,25 +159,54 @@ bot.on('text', async (ctx) => {
     return
   }
 
-  if (claimedUsers.has(userId)) {
+  const userHash = hashValue(String(userId))
+
+  try {
+    const alreadyClaimedByUser = await hasUserClaimed(userHash)
+
+    if (alreadyClaimedByUser) {
+      verifiedUsers.delete(userId)
+
+      await ctx.reply(
+        '⚠️ This Telegram account has already claimed the reward.'
+      )
+      return
+    }
+  } catch (error) {
+    console.error('Database user check error:', error)
+
     await ctx.reply(
-      '⚠️ This Telegram account has already claimed the reward.'
+      '❌ Database check failed. Please try again later.'
     )
     return
   }
 
   if (!isValidTronAddress(text)) {
     await ctx.reply(
-      '❌ This does not look like a valid TRON wallet address.\n\nPlease send a correct address that starts with T.'
+      '❌ This does not look like a valid TRON wallet address.\n\nPlease send a correct TRON address that starts with T.'
     )
     return
   }
 
   const walletAddress = text
+  const walletHash = hashValue(walletAddress)
 
-  if (claimedWallets.has(walletAddress)) {
+  try {
+    const alreadyClaimedByWallet = await hasWalletClaimed(walletHash)
+
+    if (alreadyClaimedByWallet) {
+      verifiedUsers.delete(userId)
+
+      await ctx.reply(
+        '⚠️ This wallet has already received a reward.'
+      )
+      return
+    }
+  } catch (error) {
+    console.error('Database wallet check error:', error)
+
     await ctx.reply(
-      '⚠️ This wallet has already received a reward.'
+      '❌ Database check failed. Please try again later.'
     )
     return
   }
@@ -175,8 +216,13 @@ bot.on('text', async (ctx) => {
   try {
     const result = await sendAirdrop(walletAddress, rewardAmount)
 
-    claimedUsers.add(userId)
-    claimedWallets.add(walletAddress)
+    await saveClaim({
+      userHash,
+      walletHash,
+      txid: result.txid,
+      rewardAmount
+    })
+
     verifiedUsers.delete(userId)
 
     await ctx.reply(
@@ -208,14 +254,21 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000
 
-bot.launch()
-  .then(() => {
-    console.log('Bot running')
-  })
-  .catch((error) => {
-    console.error('Bot launch error:', error)
-  })
+async function startApp() {
+  try {
+    await initDb()
+    console.log('Database initialized')
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`)
-})
+    await bot.launch()
+    console.log('Bot running')
+
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`)
+    })
+  } catch (error) {
+    console.error('Startup error:', error)
+    process.exit(1)
+  }
+}
+
+startApp()
