@@ -33,21 +33,16 @@ if (process.env.TRONGRID_API_KEY) {
 const tronWeb = new TronWeb(tronOptions)
 
 // -------------------------
-// Runtime state
-// -------------------------
 const verifiedUsers = new Set()
+const slotMessages = new Map()
 
-// one transaction at a time
 let airdropQueue = Promise.resolve()
 
-// conservative resource requirements per one airdrop transaction
 const REQUIRED_ENERGY_PER_AIRDROP = 76000
 const REQUIRED_BANDWIDTH_PER_AIRDROP = 400
 
-// small delay between chain operations
 const TX_GAP_MS = 1800
 
-// retry config for TronGrid 429
 const MAX_AIRDROP_RETRIES = 3
 const RETRY_DELAYS_MS = [2500, 5000, 8000]
 
@@ -69,7 +64,7 @@ function isAxios429(error) {
 function isValidTronAddress(address) {
   try {
     return tronWeb.isAddress(address)
-  } catch (error) {
+  } catch {
     return false
   }
 }
@@ -102,15 +97,13 @@ function hashValue(value) {
 }
 
 function getOperatorAddress() {
-  if (!process.env.TRON_PRIVATE_KEY) {
-    throw new Error('TRON_PRIVATE_KEY is not configured')
-  }
-
   return tronWeb.address.fromPrivateKey(process.env.TRON_PRIVATE_KEY)
 }
 
 async function getOperatorResources() {
+
   const operatorAddress = getOperatorAddress()
+
   const resources = await tronWeb.trx.getAccountResources(operatorAddress)
 
   const energyLimit = resources.EnergyLimit || 0
@@ -119,28 +112,22 @@ async function getOperatorResources() {
 
   const freeNetLimit = resources.freeNetLimit || 0
   const freeNetUsed = resources.freeNetUsed || 0
-  const freeBandwidthAvailable = Math.max(0, freeNetLimit - freeNetUsed)
+  const freeBandwidth = Math.max(0, freeNetLimit - freeNetUsed)
 
   const netLimit = resources.NetLimit || 0
   const netUsed = resources.NetUsed || 0
-  const stakedBandwidthAvailable = Math.max(0, netLimit - netUsed)
+  const stakedBandwidth = Math.max(0, netLimit - netUsed)
 
-  const bandwidthAvailable = freeBandwidthAvailable + stakedBandwidthAvailable
+  const bandwidthAvailable = freeBandwidth + stakedBandwidth
 
   return {
-    operatorAddress,
     energyAvailable,
-    bandwidthAvailable,
-    energyLimit,
-    energyUsed,
-    freeNetLimit,
-    freeNetUsed,
-    netLimit,
-    netUsed
+    bandwidthAvailable
   }
 }
 
 async function checkResourcesForAirdrop() {
+
   const info = await getOperatorResources()
 
   const hasEnoughEnergy = info.energyAvailable >= REQUIRED_ENERGY_PER_AIRDROP
@@ -151,8 +138,6 @@ async function checkResourcesForAirdrop() {
 
   return {
     ...info,
-    hasEnoughEnergy,
-    hasEnoughBandwidth,
     hasEnoughResources: hasEnoughEnergy && hasEnoughBandwidth,
     approxClaimsLeft: Math.max(0, Math.min(approxClaimsLeftByEnergy, approxClaimsLeftByBandwidth))
   }
@@ -163,86 +148,112 @@ async function ctxSafeGetChatMember(chatId, userId) {
 }
 
 async function isMemberOfGroupOrChannel(userId) {
+
   let groupMember = false
   let channelMember = false
 
   try {
     const group = await ctxSafeGetChatMember(config.GROUP_ID, userId)
-    if (group && isAllowedMemberStatus(group.status)) {
-      groupMember = true
-    }
-  } catch (error) {
-    console.log('Group membership check error:', error.message)
-  }
+    if (group && isAllowedMemberStatus(group.status)) groupMember = true
+  } catch {}
 
   try {
     const channel = await ctxSafeGetChatMember(config.CHANNEL_ID, userId)
-    if (channel && isAllowedMemberStatus(channel.status)) {
-      channelMember = true
-    }
-  } catch (error) {
-    console.log('Channel membership check error:', error.message)
-  }
+    if (channel && isAllowedMemberStatus(channel.status)) channelMember = true
+  } catch {}
 
   return groupMember || channelMember
 }
 
-async function sendAirdrop(walletAddress, rewardAmount) {
-  if (!process.env.TRON_PRIVATE_KEY) {
-    throw new Error('TRON_PRIVATE_KEY is not configured')
+async function sendOrUpdateSlotMessage(ctx, text) {
+
+  const userId = ctx.from.id
+  const existingMessageId = slotMessages.get(userId)
+
+  try {
+
+    if (existingMessageId) {
+
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        existingMessageId,
+        null,
+        text
+      )
+
+    } else {
+
+      const msg = await ctx.reply(text)
+      slotMessages.set(userId, msg.message_id)
+
+    }
+
+  } catch {
+
+    const msg = await ctx.reply(text)
+    slotMessages.set(userId, msg.message_id)
+
   }
+}
+
+async function sendAirdrop(walletAddress, rewardAmount) {
 
   const rewardRaw = toRawAmount(rewardAmount)
+
   const contract = await tronWeb.contract().at(config.AIRDROP_CONTRACT)
 
   const tx = await contract
     .airdrop(walletAddress, rewardRaw, config.TELEGRAM_PLATFORM_BIT)
     .send()
 
-  return {
-    txid: tx,
-    rewardRaw
-  }
+  return tx
 }
 
 async function sendAirdropWithRetry(walletAddress, rewardAmount) {
+
   let lastError = null
 
   for (let attempt = 0; attempt < MAX_AIRDROP_RETRIES; attempt++) {
+
     try {
+
       if (attempt > 0) {
         const delay = RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)]
         await sleep(delay)
       }
 
-      const result = await sendAirdrop(walletAddress, rewardAmount)
-      return result
+      return await sendAirdrop(walletAddress, rewardAmount)
+
     } catch (error) {
+
       lastError = error
 
       if (!isAxios429(error)) {
         throw error
       }
 
-      console.log(`Airdrop retry ${attempt + 1} failed with 429`)
     }
+
   }
 
   throw lastError
 }
 
 function enqueueAirdrop(jobFn) {
+
   const run = airdropQueue.then(jobFn)
   airdropQueue = run.catch(() => {})
   return run
+
 }
 
 // -------------------------
-// Bot UI
+// BOT UI
 // -------------------------
 bot.start(async (ctx) => {
+
   await ctx.reply(
-    `Welcome to ${config.BOT_NAME}
+`Welcome to ${config.BOT_NAME}
 
 To receive a random reward (1–5 4TEEN):
 
@@ -250,7 +261,7 @@ To receive a random reward (1–5 4TEEN):
 2️⃣ Press VERIFY
 3️⃣ Send your TRON wallet address
 
-Energy refills gradually during the day, so if slots are full you can check again later.`,
+Energy refills gradually during the day.`,
     Markup.inlineKeyboard([
       [
         Markup.button.url('Join Community', 'https://t.me/FourTeenMe'),
@@ -264,202 +275,156 @@ Energy refills gradually during the day, so if slots are full you can check agai
       ]
     ])
   )
+
 })
 
+// -------------------------
+// CHECK SLOT
+// -------------------------
 bot.action('check_slot', async (ctx) => {
-  try {
-    await ctx.answerCbQuery()
-  } catch (error) {
-    console.log('Callback answer error:', error.message)
-  }
+
+  try { await ctx.answerCbQuery() } catch {}
 
   try {
+
     const resourceCheck = await checkResourcesForAirdrop()
 
     if (!resourceCheck.hasEnoughResources) {
-      await ctx.reply(
-        `⚠️ No airdrop slots available right now.
+
+      await sendOrUpdateSlotMessage(ctx,
+`⚠️ Airdrop capacity is temporarily full.
 
 Energy: ${resourceCheck.energyAvailable}
 Bandwidth: ${resourceCheck.bandwidthAvailable}
+
 Approx claims available: ${resourceCheck.approxClaimsLeft}
 
-Resources refill gradually during the day.
-Try again later.`
-      )
+Resources refill gradually during the day.`)
+
       return
     }
 
-    await ctx.reply(
-      `✅ Airdrop slots available!
+    await sendOrUpdateSlotMessage(ctx,
+`✅ Airdrop slot available!
 
 Energy: ${resourceCheck.energyAvailable}
 Bandwidth: ${resourceCheck.bandwidthAvailable}
+
 Approx claims available: ${resourceCheck.approxClaimsLeft}
 
-Press VERIFY and send your TRON wallet address.`
-    )
-  } catch (error) {
-    console.error('Slot check error:', error)
-    await ctx.reply('❌ Failed to check resources. Please try again later.')
+Press VERIFY and send your TRON wallet address.`)
+
+  } catch {
+
+    await sendOrUpdateSlotMessage(ctx,'❌ Failed to check resources.')
+
   }
+
 })
 
+// -------------------------
 bot.action('verify_membership', async (ctx) => {
+
   const userId = ctx.from.id
 
-  try {
-    await ctx.answerCbQuery()
-  } catch (error) {
-    console.log('Callback answer error:', error.message)
-  }
+  try { await ctx.answerCbQuery() } catch {}
 
   const membershipOk = await isMemberOfGroupOrChannel(userId)
 
   if (!membershipOk) {
-    await ctx.reply(
-      '❌ You must join the community or channel first, then press VERIFY again.'
-    )
+
+    await ctx.reply('❌ Join the community or channel first.')
+
     return
   }
 
-  try {
-    const resourceCheck = await checkResourcesForAirdrop()
+  const resourceCheck = await checkResourcesForAirdrop()
 
-    if (!resourceCheck.hasEnoughResources) {
-      await ctx.reply(
-        `⚠️ Airdrop capacity is temporarily full.
-
-Available now:
-Energy: ${resourceCheck.energyAvailable}
-Bandwidth: ${resourceCheck.bandwidthAvailable}
-Approx claims available: ${resourceCheck.approxClaimsLeft}
-
-Resources refill gradually during the day.
-Press CHECK AIRDROP SLOT and try again later.`
-      )
-      return
-    }
-
-    verifiedUsers.add(userId)
+  if (!resourceCheck.hasEnoughResources) {
 
     await ctx.reply(
-      `✅ Membership confirmed.
-✅ Resources are available for your claim.
+`⚠️ Airdrop capacity is temporarily full.
 
-Available now:
 Energy: ${resourceCheck.energyAvailable}
 Bandwidth: ${resourceCheck.bandwidthAvailable}
-Approx claims available: ${resourceCheck.approxClaimsLeft}
 
-Now send your TRON wallet address in the next message.`
-    )
-  } catch (error) {
-    console.error('Resource check error:', error)
-    await ctx.reply('❌ Failed to check daily resources. Please try again later.')
+Resources refill gradually during the day.
+Press CHECK AIRDROP SLOT and try again later.`)
+
+    return
   }
+
+  verifiedUsers.add(userId)
+
+  await ctx.reply('✅ Membership confirmed. Send your TRON wallet address.')
+
 })
 
+// -------------------------
 bot.on('text', async (ctx) => {
+
   const userId = ctx.from.id
   const text = ctx.message.text.trim()
 
-  if (text.startsWith('/start')) {
-    return
-  }
+  if (text.startsWith('/start')) return
 
   if (!verifiedUsers.has(userId)) {
-    await ctx.reply(
-      '⚠️ First press VERIFY and pass the membership check. You can also use CHECK AIRDROP SLOT anytime.'
-    )
-    return
-  }
 
-  const userHash = hashValue(String(userId))
+    await ctx.reply('⚠️ Press VERIFY first.')
 
-  try {
-    const alreadyClaimedByUser = await hasUserClaimed(userHash)
-
-    if (alreadyClaimedByUser) {
-      verifiedUsers.delete(userId)
-      await ctx.reply('⚠️ This Telegram account has already claimed the reward.')
-      return
-    }
-  } catch (error) {
-    console.error('Database user check error:', error)
-    await ctx.reply('❌ Database check failed. Please try again later.')
     return
   }
 
   if (!isValidTronAddress(text)) {
-    await ctx.reply(
-      '❌ This does not look like a valid TRON wallet address.\n\nPlease send a correct TRON address that starts with T.'
-    )
+
+    await ctx.reply('❌ Invalid TRON address.')
+
     return
   }
 
   const walletAddress = text
+
+  const userHash = hashValue(String(userId))
   const walletHash = hashValue(walletAddress)
 
-  try {
-    const alreadyClaimedByWallet = await hasWalletClaimed(walletHash)
+  if (await hasUserClaimed(userHash)) {
 
-    if (alreadyClaimedByWallet) {
-      verifiedUsers.delete(userId)
-      await ctx.reply('⚠️ This wallet has already received a reward.')
-      return
-    }
-  } catch (error) {
-    console.error('Database wallet check error:', error)
-    await ctx.reply('❌ Database check failed. Please try again later.')
+    verifiedUsers.delete(userId)
+
+    await ctx.reply('⚠️ This Telegram account already claimed.')
+
     return
   }
 
-  await ctx.reply(
-    '⏳ Your claim is being processed. Please wait a few seconds and do not send multiple messages.'
-  )
+  if (await hasWalletClaimed(walletHash)) {
+
+    verifiedUsers.delete(userId)
+
+    await ctx.reply('⚠️ This wallet already received a reward.')
+
+    return
+  }
+
+  await ctx.reply('⏳ Processing your claim...')
 
   enqueueAirdrop(async () => {
+
     try {
-      const membershipStillOk = await isMemberOfGroupOrChannel(userId)
-
-      if (!membershipStillOk) {
-        verifiedUsers.delete(userId)
-        await ctx.reply(
-          '❌ Your membership could not be confirmed at the moment. Please join the group or channel and try again.'
-        )
-        return
-      }
-
-      const claimedAgainByUser = await hasUserClaimed(userHash)
-      if (claimedAgainByUser) {
-        verifiedUsers.delete(userId)
-        await ctx.reply('⚠️ This Telegram account has already claimed the reward.')
-        return
-      }
-
-      const claimedAgainByWallet = await hasWalletClaimed(walletHash)
-      if (claimedAgainByWallet) {
-        verifiedUsers.delete(userId)
-        await ctx.reply('⚠️ This wallet has already received a reward.')
-        return
-      }
 
       const resourceCheck = await checkResourcesForAirdrop()
 
       if (!resourceCheck.hasEnoughResources) {
-        verifiedUsers.delete(userId)
-        await ctx.reply(
-          `⚠️ There are no longer enough resources to process your claim right now.
 
-Available now:
+        verifiedUsers.delete(userId)
+
+        await ctx.reply(
+`⚠️ No resources available right now.
+
 Energy: ${resourceCheck.energyAvailable}
 Bandwidth: ${resourceCheck.bandwidthAvailable}
-Approx claims available: ${resourceCheck.approxClaimsLeft}
 
-Resources refill gradually during the day.
-Press CHECK AIRDROP SLOT and try again later.`
-        )
+Resources refill gradually during the day.`)
+
         return
       }
 
@@ -467,51 +432,35 @@ Press CHECK AIRDROP SLOT and try again later.`
 
       await sleep(TX_GAP_MS)
 
-      const result = await sendAirdropWithRetry(walletAddress, rewardAmount)
+      const txid = await sendAirdropWithRetry(walletAddress, rewardAmount)
 
       await saveClaim({
         userHash,
         walletHash,
-        txid: result.txid,
+        txid,
         rewardAmount
       })
 
       verifiedUsers.delete(userId)
 
       await ctx.reply(
-        `✅ Airdrop sent successfully!
+`✅ Airdrop sent!
 
-Wallet: ${walletAddress}
 Reward: ${rewardAmount} 4TEEN
-Tx: ${result.txid}`
-      )
-    } catch (error) {
+Tx: ${txid}`)
+
+    } catch {
+
       verifiedUsers.delete(userId)
-      console.error('Airdrop error:', error)
 
-      if (error.message === 'TRON_PRIVATE_KEY is not configured') {
-        await ctx.reply(
-          '⚠️ Bot is not fully configured yet. TRON private key is missing.'
-        )
-        return
-      }
+      await ctx.reply('❌ Airdrop failed. Try again later.')
 
-      if (isAxios429(error)) {
-        await ctx.reply(
-          '⚠️ The network is temporarily busy right now. Please try again in a minute.'
-        )
-        return
-      }
-
-      await ctx.reply(
-        '❌ Airdrop transaction failed. Please try again later.'
-      )
     }
+
   })
+
 })
 
-// -------------------------
-// Web server
 // -------------------------
 app.get('/', (req, res) => {
   res.send('4TEEN bot running')
@@ -520,29 +469,21 @@ app.get('/', (req, res) => {
 const PORT = process.env.PORT || 3000
 
 async function boot() {
-  try {
-    await initDb()
-    console.log('Database initialized')
-  } catch (error) {
-    console.error('Database init error:', error)
-  }
+
+  await initDb()
 
   try {
     await bot.telegram.deleteWebhook()
-    console.log('Old webhook deleted')
-  } catch (error) {
-    console.log('Webhook delete skipped:', error.message)
-  }
+  } catch {}
 
-  try {
-    await bot.launch()
-    console.log('Bot running')
-  } catch (error) {
-    console.error('Bot launch error:', error)
-  }
+  await bot.launch()
+
 }
 
 app.listen(PORT, () => {
+
   console.log(`Server running on port ${PORT}`)
+
   boot()
+
 })
