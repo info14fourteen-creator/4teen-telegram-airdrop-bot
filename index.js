@@ -158,6 +158,10 @@ async function checkResourcesForAirdrop() {
   }
 }
 
+async function ctxSafeGetChatMember(chatId, userId) {
+  return bot.telegram.getChatMember(chatId, userId)
+}
+
 async function isMemberOfGroupOrChannel(userId) {
   let groupMember = false
   let channelMember = false
@@ -181,10 +185,6 @@ async function isMemberOfGroupOrChannel(userId) {
   }
 
   return groupMember || channelMember
-}
-
-async function ctxSafeGetChatMember(chatId, userId) {
-  return bot.telegram.getChatMember(chatId, userId)
 }
 
 async function sendAirdrop(walletAddress, rewardAmount) {
@@ -248,17 +248,61 @@ To receive a random reward (1–5 4TEEN):
 
 1️⃣ Join our Telegram community OR channel
 2️⃣ Press VERIFY
-3️⃣ If daily resources are available, send your TRON wallet address`,
+3️⃣ Send your TRON wallet address
+
+Energy refills gradually during the day, so if slots are full you can check again later.`,
     Markup.inlineKeyboard([
       [
-        Markup.button.url('Join Community', 'https://t.me/fourteentokengroupe'),
+        Markup.button.url('Join Community', 'https://t.me/FourTeenMe'),
         Markup.button.url('Join Channel', 'https://t.me/fourteentoken')
       ],
       [
         Markup.button.callback('VERIFY', 'verify_membership')
+      ],
+      [
+        Markup.button.callback('CHECK AIRDROP SLOT', 'check_slot')
       ]
     ])
   )
+})
+
+bot.action('check_slot', async (ctx) => {
+  try {
+    await ctx.answerCbQuery()
+  } catch (error) {
+    console.log('Callback answer error:', error.message)
+  }
+
+  try {
+    const resourceCheck = await checkResourcesForAirdrop()
+
+    if (!resourceCheck.hasEnoughResources) {
+      await ctx.reply(
+        `⚠️ No airdrop slots available right now.
+
+Energy: ${resourceCheck.energyAvailable}
+Bandwidth: ${resourceCheck.bandwidthAvailable}
+Approx claims available: ${resourceCheck.approxClaimsLeft}
+
+Resources refill gradually during the day.
+Try again later.`
+      )
+      return
+    }
+
+    await ctx.reply(
+      `✅ Airdrop slots available!
+
+Energy: ${resourceCheck.energyAvailable}
+Bandwidth: ${resourceCheck.bandwidthAvailable}
+Approx claims available: ${resourceCheck.approxClaimsLeft}
+
+Press VERIFY and send your TRON wallet address.`
+    )
+  } catch (error) {
+    console.error('Slot check error:', error)
+    await ctx.reply('❌ Failed to check resources. Please try again later.')
+  }
 })
 
 bot.action('verify_membership', async (ctx) => {
@@ -284,17 +328,15 @@ bot.action('verify_membership', async (ctx) => {
 
     if (!resourceCheck.hasEnoughResources) {
       await ctx.reply(
-        `⚠️ Daily airdrop capacity is currently exhausted.
+        `⚠️ Airdrop capacity is temporarily full.
 
 Available now:
 Energy: ${resourceCheck.energyAvailable}
 Bandwidth: ${resourceCheck.bandwidthAvailable}
+Approx claims available: ${resourceCheck.approxClaimsLeft}
 
-Required for one claim:
-Energy: ${REQUIRED_ENERGY_PER_AIRDROP}
-Bandwidth: ${REQUIRED_BANDWIDTH_PER_AIRDROP}
-
-Please try again tomorrow.`
+Resources refill gradually during the day.
+Press CHECK AIRDROP SLOT and try again later.`
       )
       return
     }
@@ -308,7 +350,7 @@ Please try again tomorrow.`
 Available now:
 Energy: ${resourceCheck.energyAvailable}
 Bandwidth: ${resourceCheck.bandwidthAvailable}
-Approx claims left: ${resourceCheck.approxClaimsLeft}
+Approx claims available: ${resourceCheck.approxClaimsLeft}
 
 Now send your TRON wallet address in the next message.`
     )
@@ -327,7 +369,9 @@ bot.on('text', async (ctx) => {
   }
 
   if (!verifiedUsers.has(userId)) {
-    await ctx.reply('⚠️ First press VERIFY and pass the membership check.')
+    await ctx.reply(
+      '⚠️ First press VERIFY and pass the membership check. You can also use CHECK AIRDROP SLOT anytime.'
+    )
     return
   }
 
@@ -377,7 +421,6 @@ bot.on('text', async (ctx) => {
 
   enqueueAirdrop(async () => {
     try {
-      // re-check membership right before processing
       const membershipStillOk = await isMemberOfGroupOrChannel(userId)
 
       if (!membershipStillOk) {
@@ -388,7 +431,6 @@ bot.on('text', async (ctx) => {
         return
       }
 
-      // re-check duplicate claim just before sending
       const claimedAgainByUser = await hasUserClaimed(userHash)
       if (claimedAgainByUser) {
         verifiedUsers.delete(userId)
@@ -403,19 +445,20 @@ bot.on('text', async (ctx) => {
         return
       }
 
-      // re-check resources right before chain call
       const resourceCheck = await checkResourcesForAirdrop()
 
       if (!resourceCheck.hasEnoughResources) {
         verifiedUsers.delete(userId)
         await ctx.reply(
-          `⚠️ There are no longer enough resources to process your claim today.
+          `⚠️ There are no longer enough resources to process your claim right now.
 
 Available now:
 Energy: ${resourceCheck.energyAvailable}
 Bandwidth: ${resourceCheck.bandwidthAvailable}
+Approx claims available: ${resourceCheck.approxClaimsLeft}
 
-Please try again tomorrow.`
+Resources refill gradually during the day.
+Press CHECK AIRDROP SLOT and try again later.`
         )
         return
       }
