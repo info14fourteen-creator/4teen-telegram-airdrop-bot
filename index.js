@@ -264,7 +264,7 @@ To receive a random reward (1–5 4TEEN):
 Energy refills gradually during the day.`,
     Markup.inlineKeyboard([
       [
-        Markup.button.url('Join Community', 'https://t.me/+5V57i73Zlpg1NWJh'),
+        Markup.button.url('Join Community', 'https://t.me/+wsIZ1b1LtPExNjMx'),
         Markup.button.url('Join Channel', 'https://t.me/fourteentoken')
       ],
       [
