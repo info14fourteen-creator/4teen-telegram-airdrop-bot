@@ -38,8 +38,16 @@ const slotMessages = new Map()
 
 let airdropQueue = Promise.resolve()
 
-const REQUIRED_ENERGY_PER_AIRDROP = 76000
-const REQUIRED_BANDWIDTH_PER_AIRDROP = 400
+const REQUIRED_ENERGY_PER_AIRDROP = config.REQUIRED_ENERGY_PER_AIRDROP || 65000
+const REQUIRED_BANDWIDTH_PER_AIRDROP = config.REQUIRED_BANDWIDTH_PER_AIRDROP || 450
+
+// Prefer explicit *_FLOOR settings, but keep backward compatibility with *_RESERVE
+const MIN_ENERGY_FLOOR = Number(
+  config.MIN_ENERGY_FLOOR ?? config.MIN_ENERGY_RESERVE ?? 0
+)
+const MIN_BANDWIDTH_FLOOR = Number(
+  config.MIN_BANDWIDTH_FLOOR ?? config.MIN_BANDWIDTH_RESERVE ?? 0
+)
 
 const TX_GAP_MS = 1800
 
@@ -101,9 +109,7 @@ function getOperatorAddress() {
 }
 
 async function getOperatorResources() {
-
   const operatorAddress = getOperatorAddress()
-
   const resources = await tronWeb.trx.getAccountResources(operatorAddress)
 
   const energyLimit = resources.EnergyLimit || 0
@@ -127,17 +133,28 @@ async function getOperatorResources() {
 }
 
 async function checkResourcesForAirdrop() {
-
   const info = await getOperatorResources()
 
-  const hasEnoughEnergy = info.energyAvailable >= REQUIRED_ENERGY_PER_AIRDROP
-  const hasEnoughBandwidth = info.bandwidthAvailable >= REQUIRED_BANDWIDTH_PER_AIRDROP
+  const energyAfterNextAirdrop = info.energyAvailable - REQUIRED_ENERGY_PER_AIRDROP
+  const bandwidthAfterNextAirdrop = info.bandwidthAvailable - REQUIRED_BANDWIDTH_PER_AIRDROP
 
-  const approxClaimsLeftByEnergy = Math.floor(info.energyAvailable / REQUIRED_ENERGY_PER_AIRDROP)
-  const approxClaimsLeftByBandwidth = Math.floor(info.bandwidthAvailable / REQUIRED_BANDWIDTH_PER_AIRDROP)
+  const energyAboveFloorNow = Math.max(0, info.energyAvailable - MIN_ENERGY_FLOOR)
+  const bandwidthAboveFloorNow = Math.max(0, info.bandwidthAvailable - MIN_BANDWIDTH_FLOOR)
+
+  const hasEnoughEnergy = energyAfterNextAirdrop >= MIN_ENERGY_FLOOR
+  const hasEnoughBandwidth = bandwidthAfterNextAirdrop >= MIN_BANDWIDTH_FLOOR
+
+  const approxClaimsLeftByEnergy = Math.floor(energyAboveFloorNow / REQUIRED_ENERGY_PER_AIRDROP)
+  const approxClaimsLeftByBandwidth = Math.floor(bandwidthAboveFloorNow / REQUIRED_BANDWIDTH_PER_AIRDROP)
 
   return {
     ...info,
+    energyAfterNextAirdrop,
+    bandwidthAfterNextAirdrop,
+    energyAboveFloorNow,
+    bandwidthAboveFloorNow,
+    minEnergyFloor: MIN_ENERGY_FLOOR,
+    minBandwidthFloor: MIN_BANDWIDTH_FLOOR,
     hasEnoughResources: hasEnoughEnergy && hasEnoughBandwidth,
     approxClaimsLeft: Math.max(0, Math.min(approxClaimsLeftByEnergy, approxClaimsLeftByBandwidth))
   }
@@ -148,7 +165,6 @@ async function ctxSafeGetChatMember(chatId, userId) {
 }
 
 async function isMemberOfGroupOrChannel(userId) {
-
   let groupMember = false
   let channelMember = false
 
@@ -166,38 +182,28 @@ async function isMemberOfGroupOrChannel(userId) {
 }
 
 async function sendOrUpdateSlotMessage(ctx, text) {
-
   const userId = ctx.from.id
   const existingMessageId = slotMessages.get(userId)
 
   try {
-
     if (existingMessageId) {
-
       await ctx.telegram.editMessageText(
         ctx.chat.id,
         existingMessageId,
         null,
         text
       )
-
     } else {
-
       const msg = await ctx.reply(text)
       slotMessages.set(userId, msg.message_id)
-
     }
-
   } catch {
-
     const msg = await ctx.reply(text)
     slotMessages.set(userId, msg.message_id)
-
   }
 }
 
 async function sendAirdrop(walletAddress, rewardAmount) {
-
   const rewardRaw = toRawAmount(rewardAmount)
 
   const contract = await tronWeb.contract().at(config.AIRDROP_CONTRACT)
@@ -210,48 +216,38 @@ async function sendAirdrop(walletAddress, rewardAmount) {
 }
 
 async function sendAirdropWithRetry(walletAddress, rewardAmount) {
-
   let lastError = null
 
   for (let attempt = 0; attempt < MAX_AIRDROP_RETRIES; attempt++) {
-
     try {
-
       if (attempt > 0) {
         const delay = RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)]
         await sleep(delay)
       }
 
       return await sendAirdrop(walletAddress, rewardAmount)
-
     } catch (error) {
-
       lastError = error
 
       if (!isAxios429(error)) {
         throw error
       }
-
     }
-
   }
 
   throw lastError
 }
 
 function enqueueAirdrop(jobFn) {
-
   const run = airdropQueue.then(jobFn)
   airdropQueue = run.catch(() => {})
   return run
-
 }
 
 // -------------------------
 // BOT UI
 // -------------------------
 bot.start(async (ctx) => {
-
   await ctx.reply(
 `Welcome to ${config.BOT_NAME}
 
@@ -275,22 +271,18 @@ Energy refills gradually during the day.`,
       ]
     ])
   )
-
 })
 
 // -------------------------
 // CHECK SLOT
 // -------------------------
 bot.action('check_slot', async (ctx) => {
-
   try { await ctx.answerCbQuery() } catch {}
 
   try {
-
     const resourceCheck = await checkResourcesForAirdrop()
 
     if (!resourceCheck.hasEnoughResources) {
-
       await sendOrUpdateSlotMessage(ctx,
 `⚠️ Airdrop capacity is temporarily full.
 
@@ -298,6 +290,14 @@ Energy: ${resourceCheck.energyAvailable}
 Bandwidth: ${resourceCheck.bandwidthAvailable}
 
 Approx claims available: ${resourceCheck.approxClaimsLeft}
+Energy floor that stays untouched: ${resourceCheck.minEnergyFloor}
+Bandwidth floor that stays untouched: ${resourceCheck.minBandwidthFloor}
+
+Energy above floor now: ${resourceCheck.energyAboveFloorNow}
+Bandwidth above floor now: ${resourceCheck.bandwidthAboveFloorNow}
+
+Energy after next airdrop: ${resourceCheck.energyAfterNextAirdrop}
+Bandwidth after next airdrop: ${resourceCheck.bandwidthAfterNextAirdrop}
 
 Resources refill gradually during the day.`)
 
@@ -311,20 +311,23 @@ Energy: ${resourceCheck.energyAvailable}
 Bandwidth: ${resourceCheck.bandwidthAvailable}
 
 Approx claims available: ${resourceCheck.approxClaimsLeft}
+Energy floor that stays untouched: ${resourceCheck.minEnergyFloor}
+Bandwidth floor that stays untouched: ${resourceCheck.minBandwidthFloor}
+
+Energy above floor now: ${resourceCheck.energyAboveFloorNow}
+Bandwidth above floor now: ${resourceCheck.bandwidthAboveFloorNow}
+
+Energy after next airdrop: ${resourceCheck.energyAfterNextAirdrop}
+Bandwidth after next airdrop: ${resourceCheck.bandwidthAfterNextAirdrop}
 
 Press VERIFY and send your TRON wallet address.`)
-
   } catch {
-
-    await sendOrUpdateSlotMessage(ctx,'❌ Failed to check resources.')
-
+    await sendOrUpdateSlotMessage(ctx, '❌ Failed to check resources.')
   }
-
 })
 
 // -------------------------
 bot.action('verify_membership', async (ctx) => {
-
   const userId = ctx.from.id
 
   try { await ctx.answerCbQuery() } catch {}
@@ -332,21 +335,27 @@ bot.action('verify_membership', async (ctx) => {
   const membershipOk = await isMemberOfGroupOrChannel(userId)
 
   if (!membershipOk) {
-
     await ctx.reply('❌ Join the community or channel first.')
-
     return
   }
 
   const resourceCheck = await checkResourcesForAirdrop()
 
   if (!resourceCheck.hasEnoughResources) {
-
     await ctx.reply(
 `⚠️ Airdrop capacity is temporarily full.
 
 Energy: ${resourceCheck.energyAvailable}
 Bandwidth: ${resourceCheck.bandwidthAvailable}
+
+Energy floor that stays untouched: ${resourceCheck.minEnergyFloor}
+Bandwidth floor that stays untouched: ${resourceCheck.minBandwidthFloor}
+
+Energy above floor now: ${resourceCheck.energyAboveFloorNow}
+Bandwidth above floor now: ${resourceCheck.bandwidthAboveFloorNow}
+
+Energy after next airdrop: ${resourceCheck.energyAfterNextAirdrop}
+Bandwidth after next airdrop: ${resourceCheck.bandwidthAfterNextAirdrop}
 
 Resources refill gradually during the day.
 Press CHECK AIRDROP SLOT and try again later.`)
@@ -357,28 +366,22 @@ Press CHECK AIRDROP SLOT and try again later.`)
   verifiedUsers.add(userId)
 
   await ctx.reply('✅ Membership confirmed. Send your TRON wallet address.')
-
 })
 
 // -------------------------
 bot.on('text', async (ctx) => {
-
   const userId = ctx.from.id
   const text = ctx.message.text.trim()
 
   if (text.startsWith('/start')) return
 
   if (!verifiedUsers.has(userId)) {
-
     await ctx.reply('⚠️ Press VERIFY first.')
-
     return
   }
 
   if (!isValidTronAddress(text)) {
-
     await ctx.reply('❌ Invalid TRON address.')
-
     return
   }
 
@@ -388,33 +391,24 @@ bot.on('text', async (ctx) => {
   const walletHash = hashValue(walletAddress)
 
   if (await hasUserClaimed(userHash)) {
-
     verifiedUsers.delete(userId)
-
     await ctx.reply('⚠️ This Telegram account already claimed.')
-
     return
   }
 
   if (await hasWalletClaimed(walletHash)) {
-
     verifiedUsers.delete(userId)
-
     await ctx.reply('⚠️ This wallet already received a reward.')
-
     return
   }
 
   await ctx.reply('⏳ Processing your claim...')
 
   enqueueAirdrop(async () => {
-
     try {
-
       const resourceCheck = await checkResourcesForAirdrop()
 
       if (!resourceCheck.hasEnoughResources) {
-
         verifiedUsers.delete(userId)
 
         await ctx.reply(
@@ -422,6 +416,15 @@ bot.on('text', async (ctx) => {
 
 Energy: ${resourceCheck.energyAvailable}
 Bandwidth: ${resourceCheck.bandwidthAvailable}
+
+Energy floor that stays untouched: ${resourceCheck.minEnergyFloor}
+Bandwidth floor that stays untouched: ${resourceCheck.minBandwidthFloor}
+
+Energy above floor now: ${resourceCheck.energyAboveFloorNow}
+Bandwidth above floor now: ${resourceCheck.bandwidthAboveFloorNow}
+
+Energy after next airdrop: ${resourceCheck.energyAfterNextAirdrop}
+Bandwidth after next airdrop: ${resourceCheck.bandwidthAfterNextAirdrop}
 
 Resources refill gradually during the day.`)
 
@@ -448,17 +451,11 @@ Resources refill gradually during the day.`)
 
 Reward: ${rewardAmount} 4TEEN
 Tx: ${txid}`)
-
     } catch {
-
       verifiedUsers.delete(userId)
-
       await ctx.reply('❌ Airdrop failed. Try again later.')
-
     }
-
   })
-
 })
 
 // -------------------------
@@ -469,7 +466,6 @@ app.get('/', (req, res) => {
 const PORT = process.env.PORT || 3000
 
 async function boot() {
-
   await initDb()
 
   try {
@@ -477,13 +473,9 @@ async function boot() {
   } catch {}
 
   await bot.launch()
-
 }
 
 app.listen(PORT, () => {
-
   console.log(`Server running on port ${PORT}`)
-
   boot()
-
 })
