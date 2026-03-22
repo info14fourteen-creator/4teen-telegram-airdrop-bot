@@ -22,6 +22,21 @@ AIRDROP_CONTRACT: "TV6eXKWCsZ15c3Svz39mRQWtBsqvNNBwpQ",
 // platformBit для Telegram
 TELEGRAM_PLATFORM_BIT: 4,
 
+// Estimated resources spent by one airdrop transaction
+// Real usage: 378 Bandwidth + 60,302 Energy
+// Set with a safety margin
+REQUIRED_ENERGY_PER_AIRDROP: 65000,
+REQUIRED_BANDWIDTH_PER_AIRDROP: 450,
+
+// Hard floor that must remain untouched for other contracts / calls
+// Bot will send an airdrop only if these balances stay available AFTER the airdrop
+MIN_ENERGY_FLOOR: 617410,
+MIN_BANDWIDTH_FLOOR: 280,
+
+// Backward-compatible aliases
+MIN_ENERGY_RESERVE: 617410,
+MIN_BANDWIDTH_RESERVE: 280,
+
 // TRON network
 TRON_FULL_NODE: "https://api.trongrid.io",
 TRON_SOLIDITY_NODE: "https://api.trongrid.io",
