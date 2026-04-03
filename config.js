@@ -30,12 +30,12 @@ REQUIRED_BANDWIDTH_PER_AIRDROP: 450,
 
 // Hard floor that must remain untouched for other contracts / calls
 // Bot will send an airdrop only if these balances stay available AFTER the airdrop
-MIN_ENERGY_FLOOR: 617410,
-MIN_BANDWIDTH_FLOOR: 280,
+MIN_ENERGY_FLOOR: 100,
+MIN_BANDWIDTH_FLOOR: 10,
 
 // Backward-compatible aliases
-MIN_ENERGY_RESERVE: 617410,
-MIN_BANDWIDTH_RESERVE: 280,
+MIN_ENERGY_RESERVE: 100,
+MIN_BANDWIDTH_RESERVE: 10,
 
 // TRON network
 TRON_FULL_NODE: "https://api.trongrid.io",
