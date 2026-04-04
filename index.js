@@ -41,7 +41,6 @@ let airdropQueue = Promise.resolve()
 const REQUIRED_ENERGY_PER_AIRDROP = config.REQUIRED_ENERGY_PER_AIRDROP || 65000
 const REQUIRED_BANDWIDTH_PER_AIRDROP = config.REQUIRED_BANDWIDTH_PER_AIRDROP || 450
 
-// Prefer explicit *_FLOOR settings, but keep backward compatibility with *_RESERVE
 const MIN_ENERGY_FLOOR = Number(
   config.MIN_ENERGY_FLOOR ?? config.MIN_ENERGY_RESERVE ?? 0
 )
@@ -180,6 +179,7 @@ function buildAvailableSlotMessage(resourceCheck) {
 
 Energy: ${formatInteger(resourceCheck.energyAvailable)}
 Bandwidth: ${formatInteger(resourceCheck.bandwidthAvailable)}
+Approx claims available: ${formatInteger(resourceCheck.approxClaimsLeft)}
 
 Press VERIFY and send your TRON wallet address.`
 }
@@ -193,6 +193,7 @@ function buildNoCapacityMessage(resourceCheck, includeRetryLine = false) {
 
 Energy: ${formatInteger(resourceCheck.energyAvailable)}
 Bandwidth: ${formatInteger(resourceCheck.bandwidthAvailable)}
+Approx claims available: ${formatInteger(resourceCheck.approxClaimsLeft)}
 
 Resources refill gradually during the day.${retryLine}`
 }
