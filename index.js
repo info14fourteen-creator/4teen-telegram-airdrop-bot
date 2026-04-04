@@ -85,14 +85,29 @@ function isAllowedMemberStatus(status) {
   )
 }
 
+function formatInteger(value) {
+  return Number(value || 0).toLocaleString('en-US')
+}
+
+function formatReward(value) {
+  return Number(value).toLocaleString('en-US', {
+    minimumFractionDigits: 6,
+    maximumFractionDigits: 6
+  })
+}
+
 function getRandomReward() {
-  return Math.floor(
-    Math.random() * (config.MAX_REWARD - config.MIN_REWARD + 1)
-  ) + config.MIN_REWARD
+  const minRaw = Math.round(Number(config.MIN_REWARD) * 10 ** config.TOKEN_DECIMALS)
+  const maxRaw = Math.round(Number(config.MAX_REWARD) * 10 ** config.TOKEN_DECIMALS)
+
+  const rewardRaw =
+    Math.floor(Math.random() * (maxRaw - minRaw + 1)) + minRaw
+
+  return rewardRaw / 10 ** config.TOKEN_DECIMALS
 }
 
 function toRawAmount(amount) {
-  return amount * Math.pow(10, config.TOKEN_DECIMALS)
+  return Math.round(Number(amount) * 10 ** config.TOKEN_DECIMALS)
 }
 
 function hashValue(value) {
@@ -158,6 +173,28 @@ async function checkResourcesForAirdrop() {
     hasEnoughResources: hasEnoughEnergy && hasEnoughBandwidth,
     approxClaimsLeft: Math.max(0, Math.min(approxClaimsLeftByEnergy, approxClaimsLeftByBandwidth))
   }
+}
+
+function buildAvailableSlotMessage(resourceCheck) {
+  return `✅ Airdrop slot available!
+
+Energy: ${formatInteger(resourceCheck.energyAvailable)}
+Bandwidth: ${formatInteger(resourceCheck.bandwidthAvailable)}
+
+Press VERIFY and send your TRON wallet address.`
+}
+
+function buildNoCapacityMessage(resourceCheck, includeRetryLine = false) {
+  const retryLine = includeRetryLine
+    ? '\n\nPress CHECK AIRDROP SLOT and try again later.'
+    : ''
+
+  return `⚠️ Airdrop capacity is temporarily full.
+
+Energy: ${formatInteger(resourceCheck.energyAvailable)}
+Bandwidth: ${formatInteger(resourceCheck.bandwidthAvailable)}
+
+Resources refill gradually during the day.${retryLine}`
 }
 
 async function ctxSafeGetChatMember(chatId, userId) {
@@ -251,7 +288,7 @@ bot.start(async (ctx) => {
   await ctx.reply(
 `Welcome to ${config.BOT_NAME}
 
-To receive a random reward (1–5 4TEEN):
+To receive a random reward (1.000001–4.999999 4TEEN):
 
 1️⃣ Join our Telegram community OR channel
 2️⃣ Press VERIFY
@@ -283,44 +320,11 @@ bot.action('check_slot', async (ctx) => {
     const resourceCheck = await checkResourcesForAirdrop()
 
     if (!resourceCheck.hasEnoughResources) {
-      await sendOrUpdateSlotMessage(ctx,
-`⚠️ Airdrop capacity is temporarily full.
-
-Energy: ${resourceCheck.energyAvailable}
-Bandwidth: ${resourceCheck.bandwidthAvailable}
-
-Approx claims available: ${resourceCheck.approxClaimsLeft}
-Energy floor that stays untouched: ${resourceCheck.minEnergyFloor}
-Bandwidth floor that stays untouched: ${resourceCheck.minBandwidthFloor}
-
-Energy above floor now: ${resourceCheck.energyAboveFloorNow}
-Bandwidth above floor now: ${resourceCheck.bandwidthAboveFloorNow}
-
-Energy after next airdrop: ${resourceCheck.energyAfterNextAirdrop}
-Bandwidth after next airdrop: ${resourceCheck.bandwidthAfterNextAirdrop}
-
-Resources refill gradually during the day.`)
-
+      await sendOrUpdateSlotMessage(ctx, buildNoCapacityMessage(resourceCheck))
       return
     }
 
-    await sendOrUpdateSlotMessage(ctx,
-`✅ Airdrop slot available!
-
-Energy: ${resourceCheck.energyAvailable}
-Bandwidth: ${resourceCheck.bandwidthAvailable}
-
-Approx claims available: ${resourceCheck.approxClaimsLeft}
-Energy floor that stays untouched: ${resourceCheck.minEnergyFloor}
-Bandwidth floor that stays untouched: ${resourceCheck.minBandwidthFloor}
-
-Energy above floor now: ${resourceCheck.energyAboveFloorNow}
-Bandwidth above floor now: ${resourceCheck.bandwidthAboveFloorNow}
-
-Energy after next airdrop: ${resourceCheck.energyAfterNextAirdrop}
-Bandwidth after next airdrop: ${resourceCheck.bandwidthAfterNextAirdrop}
-
-Press VERIFY and send your TRON wallet address.`)
+    await sendOrUpdateSlotMessage(ctx, buildAvailableSlotMessage(resourceCheck))
   } catch {
     await sendOrUpdateSlotMessage(ctx, '❌ Failed to check resources.')
   }
@@ -342,24 +346,7 @@ bot.action('verify_membership', async (ctx) => {
   const resourceCheck = await checkResourcesForAirdrop()
 
   if (!resourceCheck.hasEnoughResources) {
-    await ctx.reply(
-`⚠️ Airdrop capacity is temporarily full.
-
-Energy: ${resourceCheck.energyAvailable}
-Bandwidth: ${resourceCheck.bandwidthAvailable}
-
-Energy floor that stays untouched: ${resourceCheck.minEnergyFloor}
-Bandwidth floor that stays untouched: ${resourceCheck.minBandwidthFloor}
-
-Energy above floor now: ${resourceCheck.energyAboveFloorNow}
-Bandwidth above floor now: ${resourceCheck.bandwidthAboveFloorNow}
-
-Energy after next airdrop: ${resourceCheck.energyAfterNextAirdrop}
-Bandwidth after next airdrop: ${resourceCheck.bandwidthAfterNextAirdrop}
-
-Resources refill gradually during the day.
-Press CHECK AIRDROP SLOT and try again later.`)
-
+    await ctx.reply(buildNoCapacityMessage(resourceCheck, true))
     return
   }
 
@@ -410,24 +397,7 @@ bot.on('text', async (ctx) => {
 
       if (!resourceCheck.hasEnoughResources) {
         verifiedUsers.delete(userId)
-
-        await ctx.reply(
-`⚠️ No resources available right now.
-
-Energy: ${resourceCheck.energyAvailable}
-Bandwidth: ${resourceCheck.bandwidthAvailable}
-
-Energy floor that stays untouched: ${resourceCheck.minEnergyFloor}
-Bandwidth floor that stays untouched: ${resourceCheck.minBandwidthFloor}
-
-Energy above floor now: ${resourceCheck.energyAboveFloorNow}
-Bandwidth above floor now: ${resourceCheck.bandwidthAboveFloorNow}
-
-Energy after next airdrop: ${resourceCheck.energyAfterNextAirdrop}
-Bandwidth after next airdrop: ${resourceCheck.bandwidthAfterNextAirdrop}
-
-Resources refill gradually during the day.`)
-
+        await ctx.reply(buildNoCapacityMessage(resourceCheck))
         return
       }
 
@@ -441,7 +411,7 @@ Resources refill gradually during the day.`)
         userHash,
         walletHash,
         txid,
-        rewardAmount
+        rewardAmount: rewardAmount.toFixed(6)
       })
 
       verifiedUsers.delete(userId)
@@ -449,7 +419,7 @@ Resources refill gradually during the day.`)
       await ctx.reply(
 `✅ Airdrop sent!
 
-Reward: ${rewardAmount} 4TEEN
+Reward: ${formatReward(rewardAmount)} 4TEEN
 Tx: ${txid}`)
     } catch {
       verifiedUsers.delete(userId)
