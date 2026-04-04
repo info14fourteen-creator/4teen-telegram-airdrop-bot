@@ -27,8 +27,8 @@ module.exports = {
   // Estimated resources spent by one airdrop transaction
   // Real usage: 378 Bandwidth + 60,302 Energy
   // Set with a safety margin
-  REQUIRED_ENERGY_PER_AIRDROP: 65000,
-  REQUIRED_BANDWIDTH_PER_AIRDROP: 450,
+  REQUIRED_ENERGY_PER_AIRDROP: 60302,
+  REQUIRED_BANDWIDTH_PER_AIRDROP: 378,
 
   // Hard floor that must remain untouched for other contracts / calls
   // Bot will send an airdrop only if these balances stay available AFTER the airdrop
