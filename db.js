@@ -14,9 +14,15 @@ async function initDb() {
       telegram_user_id_hash TEXT UNIQUE NOT NULL,
       wallet_hash TEXT UNIQUE NOT NULL,
       txid TEXT,
-      reward_amount INTEGER NOT NULL,
+      reward_amount NUMERIC(18,6) NOT NULL,
       claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `)
+
+  await pool.query(`
+    ALTER TABLE claims
+    ALTER COLUMN reward_amount TYPE NUMERIC(18,6)
+    USING reward_amount::NUMERIC(18,6)
   `)
 }
 
