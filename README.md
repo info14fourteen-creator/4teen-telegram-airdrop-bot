@@ -11,26 +11,26 @@ using the AirdropVault smart contract.
 
 Features
 
--   Telegram membership verification
--   Accepts TRON wallet address
--   Random reward generation (1–5 4TEEN)
--   Calls smart contract airdrop() function
--   Prevents duplicate claims per Telegram account and wallet
--   Simple deployment on Heroku
+- Telegram membership verification
+- Accepts TRON wallet address
+- Random decimal reward generation (1.000001–4.999999 4TEEN)
+- Calls smart contract airdrop() function
+- Prevents duplicate claims per Telegram account and wallet
+- Simple deployment on Heroku
 
 ------------------------------------------------------------------------
 
 How the Bot Works
 
-1.  User starts the bot with /start
-2.  Bot asks the user to join the community or channel
-3.  User presses VERIFY
-4.  Bot checks membership in:
-    -   Telegram group
-    -   Telegram channel
-5.  If verified, user sends a TRON wallet address
-6.  Bot sends a random reward between 1 and 5 4TEEN
-7.  The reward is sent through the AirdropVault contract
+1. User starts the bot with /start
+2. Bot asks the user to join the community or channel
+3. User presses VERIFY
+4. Bot checks membership in:
+   - Telegram group
+   - Telegram channel
+5. If verified, user sends a TRON wallet address
+6. Bot sends a random reward between 1.000001 and 4.999999 4TEEN
+7. The reward is sent through the AirdropVault contract
 
 ------------------------------------------------------------------------
 
@@ -72,7 +72,7 @@ Reward Logic
 
 The reward is randomly generated between:
 
-1 — 5 4TEEN
+1.000001 — 4.999999 4TEEN
 
 Token decimals:
 
@@ -82,7 +82,7 @@ The bot converts the amount to raw units before calling the contract.
 
 Example:
 
-3 4TEEN -> 3000000 raw units
+3.482761 4TEEN -> 3482761 raw units
 
 ------------------------------------------------------------------------
 
@@ -100,12 +100,12 @@ config.js
 
 Contains:
 
--   Telegram group ID
--   Telegram channel ID
--   reward settings
--   token configuration
--   smart contract addresses
--   TRON network endpoints
+- Telegram group ID
+- Telegram channel ID
+- reward settings
+- token configuration
+- smart contract addresses
+- TRON network endpoints
 
 ------------------------------------------------------------------------
 
@@ -144,10 +144,10 @@ Deployment
 
 The bot can be deployed on:
 
--   Heroku
--   Render
--   VPS
--   Docker
+- Heroku
+- Render
+- VPS
+- Docker
 
 Heroku deployment is recommended for simplicity.
 
@@ -157,15 +157,15 @@ Security Notes
 
 This bot currently prevents duplicate claims using:
 
--   Telegram user ID
--   Wallet address
+- Telegram user ID
+- Wallet address
 
 Future versions may include:
 
--   persistent database storage
--   rate limiting
--   anti-bot protection
--   advanced claim validation
+- persistent database storage
+- rate limiting
+- anti-bot protection
+- advanced claim validation
 
 ------------------------------------------------------------------------
 
